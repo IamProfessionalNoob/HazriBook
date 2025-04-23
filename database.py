@@ -309,31 +309,23 @@ class Database:
             
             # Get attendance records
             attendance = pd.read_sql_query('''
+                WITH RECURSIVE dates(date) AS (
+                    SELECT date(?)
+                    UNION ALL
+                    SELECT date(date, '+1 day')
+                    FROM dates
+                    WHERE date < date(?)
+                )
                 SELECT 
-                    date,
-                    COALESCE(is_present, 0) as is_present,
+                    d.date,
+                    COALESCE(a.is_present, 0) as is_present,
                     COALESCE(
-                        (SELECT 1 FROM holidays h WHERE h.date = a.date),
+                        (SELECT 1 FROM holidays h WHERE h.date = d.date),
                         0
                     ) as is_holiday
-                FROM (
-                    SELECT date(?) + (n-1) || ' days' as date
-                    FROM (
-                        SELECT 1 + number as n
-                        FROM (
-                            WITH RECURSIVE
-                                cnt(number) AS (
-                                    SELECT 0
-                                    UNION ALL
-                                    SELECT number + 1 FROM cnt
-                                    LIMIT ?
-                                )
-                            SELECT number FROM cnt
-                        )
-                    )
-                ) dates
-                LEFT JOIN attendance a ON dates.date = a.date AND a.staff_id = ?
-            ''', conn, params=(first_day, (last_day - first_day).days + 1, staff_id))
+                FROM dates d
+                LEFT JOIN attendance a ON d.date = a.date AND a.staff_id = ?
+            ''', conn, params=(first_day, last_day, staff_id))
             
             # Convert date strings to datetime
             attendance['date'] = pd.to_datetime(attendance['date'])
