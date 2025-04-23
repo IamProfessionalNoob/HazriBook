@@ -29,6 +29,14 @@ A streamlined web application for managing staff attendance, salary calculations
 - Username: admin
 - Password: admin
 
+- 
+<div align="center">
+   
+[!["Buy Me A Coffee"](https://www.buymeacoffee.com/assets/img/custom_images/orange_img.png)](buymeacoffee.com/KRISHAGRAWAL)
+
+</div>
+
+
 ## Deployment
 
 ### Option 1: Streamlit Cloud (Recommended)
