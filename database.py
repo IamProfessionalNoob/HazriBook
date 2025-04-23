@@ -560,4 +560,27 @@ class Database:
                 'avg_attendance': avg_attendance,
                 'total_salary': total_salary,
                 'total_advance': total_advance
-            } 
+            }
+
+    def get_advance_deduction(self, staff_id, year, month):
+        """Calculate advance deductions for a staff member in a given month."""
+        with self.get_connection() as conn:
+            # Get the first and last day of the month
+            first_day = date(year, month, 1)
+            if month == 12:
+                last_day = date(year + 1, 1, 1) - timedelta(days=1)
+            else:
+                last_day = date(year, month + 1, 1) - timedelta(days=1)
+            
+            # Get advance repayments due in this month
+            query = '''
+                SELECT SUM(ar.amount) as total_deduction
+                FROM advance_repayments ar
+                JOIN advances a ON ar.advance_id = a.id
+                WHERE a.staff_id = ?
+                AND ar.due_date BETWEEN ? AND ?
+                AND ar.is_paid = 0
+            '''
+            
+            result = pd.read_sql_query(query, conn, params=(staff_id, first_day, last_day))
+            return float(result['total_deduction'].iloc[0]) if not result.empty and result['total_deduction'].iloc[0] is not None else 0.0 
