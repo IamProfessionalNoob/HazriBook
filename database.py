@@ -1,5 +1,5 @@
 import sqlite3
-from datetime import datetime, date
+from datetime import datetime, date, timedelta
 import pandas as pd
 import bcrypt
 import json
@@ -298,19 +298,51 @@ class Database:
                 return staff_df
 
     def get_monthly_attendance_for_staff(self, staff_id, year, month):
-        """Get attendance for a specific staff member for a given month."""
-        query = """
-            SELECT date, is_present, is_holiday
-            FROM attendance
-            WHERE staff_id = ? AND strftime('%Y', date) = ? AND strftime('%m', date) = ?
-        """
-        
+        """Get attendance records for a specific staff member in a given month."""
         with self.get_connection() as conn:
-            cursor = conn.cursor()
-            cursor.execute(query, (staff_id, str(year), str(month).zfill(2)))
-            rows = cursor.fetchall()
+            # Get all dates in the month
+            first_day = date(year, month, 1)
+            if month == 12:
+                last_day = date(year + 1, 1, 1) - timedelta(days=1)
+            else:
+                last_day = date(year, month + 1, 1) - timedelta(days=1)
             
-            return pd.DataFrame(rows, columns=['date', 'is_present', 'is_holiday'])
+            # Get attendance records
+            attendance = pd.read_sql_query('''
+                SELECT 
+                    date,
+                    COALESCE(is_present, 0) as is_present,
+                    COALESCE(
+                        (SELECT 1 FROM holidays h WHERE h.date = a.date),
+                        0
+                    ) as is_holiday
+                FROM (
+                    SELECT date(?) + (n-1) || ' days' as date
+                    FROM (
+                        SELECT 1 + number as n
+                        FROM (
+                            WITH RECURSIVE
+                                cnt(number) AS (
+                                    SELECT 0
+                                    UNION ALL
+                                    SELECT number + 1 FROM cnt
+                                    LIMIT ?
+                                )
+                            SELECT number FROM cnt
+                        )
+                    )
+                ) dates
+                LEFT JOIN attendance a ON dates.date = a.date AND a.staff_id = ?
+            ''', conn, params=(first_day, (last_day - first_day).days + 1, staff_id))
+            
+            # Convert date strings to datetime
+            attendance['date'] = pd.to_datetime(attendance['date'])
+            
+            # Ensure boolean columns
+            attendance['is_present'] = attendance['is_present'].astype(bool)
+            attendance['is_holiday'] = attendance['is_holiday'].astype(bool)
+            
+            return attendance
 
     def get_working_days_in_month(self, year, month):
         """Get the number of working days in a month (excluding holidays)."""
