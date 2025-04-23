@@ -241,7 +241,11 @@ class Database:
             
             # Get attendance data
             attendance_df = pd.read_sql_query('''
-                SELECT s.id, s.name, a.is_present, a.is_holiday
+                SELECT 
+                    s.id, 
+                    s.name, 
+                    COALESCE(a.is_present, 0) as is_present,
+                    COALESCE(a.is_holiday, 0) as is_holiday
                 FROM staff s
                 LEFT JOIN attendance a ON s.id = a.staff_id AND a.date = ?
                 ORDER BY s.name
@@ -583,4 +587,29 @@ class Database:
             '''
             
             result = pd.read_sql_query(query, conn, params=(staff_id, first_day, last_day))
-            return float(result['total_deduction'].iloc[0]) if not result.empty and result['total_deduction'].iloc[0] is not None else 0.0 
+            return float(result['total_deduction'].iloc[0]) if not result.empty and result['total_deduction'].iloc[0] is not None else 0.0
+
+    def change_password(self, username, current_password, new_password):
+        """Change a user's password after verifying their current password."""
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            # First verify the current password
+            cursor.execute('SELECT password FROM users WHERE username = ?', (username,))
+            result = cursor.fetchone()
+            
+            if not result:
+                return False, "User not found"
+            
+            if not self._check_password(current_password, result[0]):
+                return False, "Current password is incorrect"
+            
+            # Hash and update the new password
+            hashed_password = self._hash_password(new_password)
+            cursor.execute('''
+                UPDATE users 
+                SET password = ?
+                WHERE username = ?
+            ''', (hashed_password, username))
+            conn.commit()
+            
+            return True, "Password updated successfully" 
