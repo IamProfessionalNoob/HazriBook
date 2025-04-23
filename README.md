@@ -32,7 +32,7 @@ A streamlined web application for managing staff attendance, salary calculations
 - 
 <div align="center">
    
-[!["Buy Me A Coffee"](https://www.buymeacoffee.com/assets/img/custom_images/orange_img.png)](https://www.buymeacoffee.com/iamprofessionalnoob)
+[!["Buy Me A Coffee"](https://www.buymeacoffee.com/assets/img/custom_images/orange_img.png)](buymeacoffee.com/KRISHAGRAWAL)
 
 </div>
 
