@@ -24,7 +24,22 @@ class Database:
                     name TEXT NOT NULL,
                     phone TEXT,
                     monthly_salary REAL NOT NULL,
+                    salary_cycle_start INTEGER DEFAULT 1,
+                    salary_cycle_end INTEGER DEFAULT 31,
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            ''')
+
+            # Salary history table
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS salary_history (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    staff_id INTEGER,
+                    salary REAL NOT NULL,
+                    effective_from DATE NOT NULL,
+                    effective_to DATE,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    FOREIGN KEY (staff_id) REFERENCES staff (id)
                 )
             ''')
 
@@ -34,21 +49,42 @@ class Database:
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     staff_id INTEGER,
                     date DATE NOT NULL,
-                    is_present BOOLEAN DEFAULT 0,
+                    is_present BOOLEAN DEFAULT 1,
                     is_holiday BOOLEAN DEFAULT 0,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                     FOREIGN KEY (staff_id) REFERENCES staff (id),
                     UNIQUE(staff_id, date)
                 )
             ''')
 
-            # Advance payments table
+            # Advances table
             cursor.execute('''
                 CREATE TABLE IF NOT EXISTS advances (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     staff_id INTEGER,
                     amount REAL NOT NULL,
                     date DATE NOT NULL,
+                    repayment_type TEXT CHECK(repayment_type IN ('OneTime', 'Weekly', 'Monthly')),
+                    emi_amount REAL,
+                    total_emi_count INTEGER,
+                    remaining_amount REAL,
+                    status TEXT DEFAULT 'Active' CHECK(status IN ('Active', 'Completed')),
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                     FOREIGN KEY (staff_id) REFERENCES staff (id)
+                )
+            ''')
+
+            # Advance repayments table
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS advance_repayments (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    advance_id INTEGER,
+                    amount REAL NOT NULL,
+                    due_date DATE NOT NULL,
+                    is_paid BOOLEAN DEFAULT 0,
+                    paid_date DATE,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    FOREIGN KEY (advance_id) REFERENCES advances (id)
                 )
             ''')
 
@@ -60,7 +96,7 @@ class Database:
                 )
             ''')
 
-            # Users table for multi-user access
+            # Users table
             cursor.execute('''
                 CREATE TABLE IF NOT EXISTS users (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -68,18 +104,6 @@ class Database:
                     password TEXT NOT NULL,
                     role TEXT NOT NULL,
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                )
-            ''')
-
-            # Advance repayment schedule table
-            cursor.execute('''
-                CREATE TABLE IF NOT EXISTS advance_repayments (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    advance_id INTEGER,
-                    amount REAL NOT NULL,
-                    due_date DATE NOT NULL,
-                    is_paid BOOLEAN DEFAULT 0,
-                    FOREIGN KEY (advance_id) REFERENCES advances (id)
                 )
             ''')
 
@@ -94,10 +118,13 @@ class Database:
                 )
             ''')
 
-            # Insert default working days if not exists
+            # Insert default settings if not exists
             cursor.execute('''
                 INSERT OR IGNORE INTO settings (key, value)
-                VALUES ('working_days', '26')
+                VALUES 
+                    ('working_days', '26'),
+                    ('salary_cycle_start', '1'),
+                    ('salary_cycle_end', '31')
             ''')
             
             # Insert default admin user if not exists
@@ -146,13 +173,13 @@ class Database:
             conn.commit()
 
     # Staff Management
-    def add_staff(self, name, phone, monthly_salary):
+    def add_staff(self, name, phone, monthly_salary, salary_cycle_start=1, salary_cycle_end=31):
         with self.get_connection() as conn:
             cursor = conn.cursor()
             cursor.execute('''
-                INSERT INTO staff (name, phone, monthly_salary)
-                VALUES (?, ?, ?)
-            ''', (name, phone, monthly_salary))
+                INSERT INTO staff (name, phone, monthly_salary, salary_cycle_start, salary_cycle_end)
+                VALUES (?, ?, ?, ?, ?)
+            ''', (name, phone, monthly_salary, salary_cycle_start, salary_cycle_end))
             conn.commit()
             return cursor.lastrowid
 
@@ -193,24 +220,34 @@ class Database:
             
             return cursor.lastrowid
     
-    def get_holidays(self, year=None, month=None):
-        with self.get_connection() as conn:
-            if year and month:
-                # Get holidays for a specific month
-                first_day = f"{year}-{month:02d}-01"
-                last_day = f"{year}-{month:02d}-31"
-                return pd.read_sql_query('''
-                    SELECT * FROM holidays
-                    WHERE date BETWEEN ? AND ?
-                    ORDER BY date
-                ''', conn, params=(first_day, last_day))
-            else:
-                # Get all holidays
-                return pd.read_sql_query('''
-                    SELECT * FROM holidays
-                    ORDER BY date
-                ''', conn)
-    
+    def get_holidays(self, year=None, month=None, start_date=None, end_date=None):
+        """Get all holidays within a date range"""
+        try:
+            with self.get_connection() as conn:
+                if year is not None and month is not None:
+                    # Get holidays for a specific month
+                    first_day = f"{year}-{month:02d}-01"
+                    last_day = f"{year}-{month:02d}-31"
+                    return pd.read_sql_query('''
+                        SELECT id, date, name FROM holidays 
+                        WHERE date BETWEEN ? AND ?
+                        ORDER BY date
+                    ''', conn, params=(first_day, last_day))
+                elif start_date and end_date:
+                    return pd.read_sql_query('''
+                        SELECT id, date, name FROM holidays 
+                        WHERE date BETWEEN ? AND ?
+                        ORDER BY date
+                    ''', conn, params=(start_date, end_date))
+                else:
+                    return pd.read_sql_query('''
+                        SELECT id, date, name FROM holidays 
+                        ORDER BY date
+                    ''', conn)
+        except Exception as e:
+            print(f"Error in get_holidays: {e}")
+            return pd.DataFrame(columns=['id', 'date', 'name'])
+
     def delete_holiday(self, holiday_id):
         with self.get_connection() as conn:
             cursor = conn.cursor()
@@ -218,11 +255,14 @@ class Database:
             conn.commit()
     
     def is_holiday(self, date):
-        with self.get_connection() as conn:
-            cursor = conn.cursor()
-            cursor.execute('SELECT id FROM holidays WHERE date = ?', (date,))
-            result = cursor.fetchone()
-            return result is not None
+        """Check if a given date is a holiday"""
+        try:
+            cursor = self.get_connection().cursor()
+            cursor.execute('SELECT 1 FROM holidays WHERE date = ?', (date,))
+            return cursor.fetchone() is not None
+        except Exception as e:
+            print(f"Error in is_holiday: {e}")
+            return False
 
     # Attendance Management
     def mark_attendance(self, staff_id, date, is_present, is_holiday=False):
@@ -250,6 +290,10 @@ class Database:
                 LEFT JOIN attendance a ON s.id = a.staff_id AND a.date = ?
                 ORDER BY s.name
             ''', conn, params=(date,))
+            
+            # Convert numeric values to boolean
+            attendance_df['is_present'] = attendance_df['is_present'].astype(bool)
+            attendance_df['is_holiday'] = attendance_df['is_holiday'].astype(bool)
             
             # If it's a holiday, mark all staff as present
             if is_holiday:
@@ -293,7 +337,7 @@ class Database:
                     for _, holiday in holidays_df.iterrows():
                         holiday_date = holiday['date']
                         if holiday_date in result_df.columns:
-                            result_df[holiday_date] = True
+                            result_df[holiday_date] = 'Leave'
                             # Add a note that this is a holiday
                             result_df.rename(columns={holiday_date: f"{holiday_date} (Holiday: {holiday['name']})"}, inplace=True)
                 
@@ -479,6 +523,177 @@ class Database:
             ''', (key, str(value)))
             conn.commit()
 
+    def get_salary_cycle(self):
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute('SELECT value FROM settings WHERE key IN ("salary_cycle_start", "salary_cycle_end")')
+            results = cursor.fetchall()
+            return {
+                'start': int(results[0][0]),
+                'end': int(results[1][0])
+            }
+
+    def set_salary_cycle(self, start_day, end_day):
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute('UPDATE settings SET value = ? WHERE key = "salary_cycle_start"', (str(start_day),))
+            cursor.execute('UPDATE settings SET value = ? WHERE key = "salary_cycle_end"', (str(end_day),))
+            conn.commit()
+
+    def update_staff_salary(self, staff_id, new_salary, effective_from):
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            # End the previous salary record
+            cursor.execute('''
+                UPDATE salary_history 
+                SET effective_to = ? 
+                WHERE staff_id = ? AND effective_to IS NULL
+            ''', (effective_from, staff_id))
+            
+            # Add new salary record
+            cursor.execute('''
+                INSERT INTO salary_history (staff_id, salary, effective_from)
+                VALUES (?, ?, ?)
+            ''', (staff_id, new_salary, effective_from))
+            
+            # Update current salary in staff table
+            cursor.execute('''
+                UPDATE staff 
+                SET monthly_salary = ? 
+                WHERE id = ?
+            ''', (new_salary, staff_id))
+            
+            conn.commit()
+
+    def get_staff_salary_history(self, staff_id):
+        with self.get_connection() as conn:
+            return pd.read_sql_query('''
+                SELECT * FROM salary_history 
+                WHERE staff_id = ? 
+                ORDER BY effective_from DESC
+            ''', conn, params=(staff_id,))
+
+    def add_advance_with_emi(self, staff_id, amount, date, repayment_type, emi_amount=None, emi_count=None):
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute('''
+                INSERT INTO advances (
+                    staff_id, amount, date, repayment_type, 
+                    emi_amount, total_emi_count, remaining_amount
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+            ''', (staff_id, amount, date, repayment_type, emi_amount, emi_count, amount))
+            conn.commit()
+            return cursor.lastrowid
+
+    def get_advance_details(self, advance_id):
+        with self.get_connection() as conn:
+            return pd.read_sql_query('''
+                SELECT * FROM advances WHERE id = ?
+            ''', conn, params=(advance_id,)).iloc[0]
+
+    def update_advance_remaining(self, advance_id, paid_amount):
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute('''
+                UPDATE advances 
+                SET remaining_amount = remaining_amount - ?,
+                    status = CASE 
+                        WHEN remaining_amount - ? <= 0 THEN 'Completed'
+                        ELSE status 
+                    END
+                WHERE id = ?
+            ''', (paid_amount, paid_amount, advance_id))
+            conn.commit()
+
+    def auto_mark_attendance(self, date):
+        """Automatically mark attendance for all staff on a given date"""
+        try:
+            # Check if it's a holiday
+            cursor = self.get_connection().cursor()
+            cursor.execute('SELECT 1 FROM holidays WHERE date = ?', (date,))
+            is_holiday = cursor.fetchone() is not None
+
+            # Get all staff
+            cursor.execute('SELECT id FROM staff')
+            staff_list = cursor.fetchall()
+
+            # Mark attendance for each staff
+            for staff in staff_list:
+                cursor.execute('''
+                    INSERT OR REPLACE INTO attendance (staff_id, date, is_present, is_holiday)
+                    VALUES (?, ?, ?, ?)
+                ''', (staff[0], date, True, is_holiday))
+
+            self.get_connection().commit()
+            return True
+        except Exception as e:
+            print(f"Error in auto_mark_attendance: {e}")
+            return False
+
+    def add_holiday(self, date, name):
+        """Add a new holiday"""
+        try:
+            cursor = self.get_connection().cursor()
+            cursor.execute('''
+                INSERT INTO holidays (date, name)
+                VALUES (?, ?)
+            ''', (date, name))
+            self.get_connection().commit()
+            return True
+        except Exception as e:
+            print(f"Error in add_holiday: {e}")
+            return False
+
+    def remove_holiday(self, date):
+        """Remove a holiday"""
+        try:
+            cursor = self.get_connection().cursor()
+            cursor.execute('DELETE FROM holidays WHERE date = ?', (date,))
+            self.get_connection().commit()
+            return True
+        except Exception as e:
+            print(f"Error in remove_holiday: {e}")
+            return False
+
+    def get_holidays(self, year=None, month=None, start_date=None, end_date=None):
+        """Get all holidays within a date range"""
+        try:
+            with self.get_connection() as conn:
+                if year is not None and month is not None:
+                    # Get holidays for a specific month
+                    first_day = f"{year}-{month:02d}-01"
+                    last_day = f"{year}-{month:02d}-31"
+                    return pd.read_sql_query('''
+                        SELECT id, date, name FROM holidays 
+                        WHERE date BETWEEN ? AND ?
+                        ORDER BY date
+                    ''', conn, params=(first_day, last_day))
+                elif start_date and end_date:
+                    return pd.read_sql_query('''
+                        SELECT id, date, name FROM holidays 
+                        WHERE date BETWEEN ? AND ?
+                        ORDER BY date
+                    ''', conn, params=(start_date, end_date))
+                else:
+                    return pd.read_sql_query('''
+                        SELECT id, date, name FROM holidays 
+                        ORDER BY date
+                    ''', conn)
+        except Exception as e:
+            print(f"Error in get_holidays: {e}")
+            return pd.DataFrame(columns=['id', 'date', 'name'])
+
+    def is_holiday(self, date):
+        """Check if a given date is a holiday"""
+        try:
+            cursor = self.get_connection().cursor()
+            cursor.execute('SELECT 1 FROM holidays WHERE date = ?', (date,))
+            return cursor.fetchone() is not None
+        except Exception as e:
+            print(f"Error in is_holiday: {e}")
+            return False
+
     # Report Generation
     def get_monthly_report(self, year, month):
         """Generate monthly attendance and salary report."""
@@ -612,4 +827,179 @@ class Database:
             ''', (hashed_password, username))
             conn.commit()
             
-            return True, "Password updated successfully" 
+            return True, "Password updated successfully"
+
+    def get_attendance_calendar(self, year, month):
+        """Get attendance calendar for a specific month."""
+        with self.get_connection() as conn:
+            # Get the first and last day of the month
+            first_day = date(year, month, 1)
+            if month == 12:
+                last_day = date(year + 1, 1, 1) - timedelta(days=1)
+            else:
+                last_day = date(year, month + 1, 1) - timedelta(days=1)
+            
+            # Get all staff
+            staff_df = pd.read_sql_query("SELECT id, name FROM staff", conn)
+            
+            # Get all attendance records for the month
+            attendance_df = pd.read_sql_query('''
+                SELECT staff_id, date, is_present, is_holiday
+                FROM attendance
+                WHERE date BETWEEN ? AND ?
+            ''', conn, params=(first_day, last_day))
+            
+            # Create a pivot table for the calendar view
+            if not attendance_df.empty:
+                pivot_df = attendance_df.pivot(
+                    index='staff_id', 
+                    columns='date', 
+                    values='is_present'
+                ).fillna(False)
+                
+                # Merge with staff names
+                result_df = staff_df.merge(pivot_df, left_on='id', right_index=True)
+                
+                # Rename columns to show dates
+                result_df = result_df.rename(columns={col: col.strftime('%d') for col in result_df.columns if isinstance(col, pd.Timestamp)})
+                
+                return result_df
+            else:
+                return staff_df
+
+    def get_staff_salary_cycle(self, staff_id):
+        """Get salary cycle for a specific staff member."""
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute('''
+                SELECT salary_cycle_start, salary_cycle_end 
+                FROM staff 
+                WHERE id = ?
+            ''', (staff_id,))
+            result = cursor.fetchone()
+            if result:
+                return {
+                    'start': int(result[0]) if result[0] else 1,
+                    'end': int(result[1]) if result[1] else 31
+                }
+            return {'start': 1, 'end': 31}  # Default values
+
+    def set_staff_salary_cycle(self, staff_id, start_day, end_day):
+        """Set salary cycle for a specific staff member."""
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute('''
+                UPDATE staff 
+                SET salary_cycle_start = ?, salary_cycle_end = ?
+                WHERE id = ?
+            ''', (start_day, end_day, staff_id))
+            conn.commit()
+
+    def get_all_advances(self):
+        """Get all advance payments."""
+        with self.get_connection() as conn:
+            return pd.read_sql_query('''
+                SELECT a.*, s.name as staff_name
+                FROM advances a
+                JOIN staff s ON a.staff_id = s.id
+                ORDER BY a.date DESC
+            ''', conn)
+
+    def add_advance_repayment(self, advance_id, amount, due_date):
+        """Add a new advance repayment record."""
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute('''
+                INSERT INTO advance_repayments (advance_id, amount, due_date)
+                VALUES (?, ?, ?)
+            ''', (advance_id, amount, due_date))
+            conn.commit()
+            return cursor.lastrowid
+
+    def mark_repayment_paid(self, repayment_id, paid_date=None):
+        """Mark an advance repayment as paid."""
+        if paid_date is None:
+            paid_date = date.today()
+            
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute('''
+                UPDATE advance_repayments
+                SET is_paid = 1, paid_date = ?
+                WHERE id = ?
+            ''', (paid_date, repayment_id))
+            conn.commit()
+
+    def get_pending_repayments(self, staff_id=None, start_date=None, end_date=None):
+        """Get all pending advance repayments."""
+        with self.get_connection() as conn:
+            query = '''
+                SELECT 
+                    ar.id as repayment_id,
+                    ar.advance_id,
+                    s.id as staff_id,
+                    s.name as staff_name,
+                    a.amount as total_advance,
+                    ar.amount as repayment_amount,
+                    ar.due_date,
+                    a.date as advance_date
+                FROM advance_repayments ar
+                JOIN advances a ON ar.advance_id = a.id
+                JOIN staff s ON a.staff_id = s.id
+                WHERE ar.is_paid = 0
+            '''
+            
+            params = []
+            if staff_id:
+                query += ' AND s.id = ?'
+                params.append(staff_id)
+            if start_date:
+                query += ' AND ar.due_date >= ?'
+                params.append(start_date)
+            if end_date:
+                query += ' AND ar.due_date <= ?'
+                params.append(end_date)
+                
+            query += ' ORDER BY ar.due_date'
+            
+            return pd.read_sql_query(query, conn, params=params)
+
+    def get_advance_repayment_history(self, advance_id):
+        """Get repayment history for a specific advance."""
+        with self.get_connection() as conn:
+            return pd.read_sql_query('''
+                SELECT 
+                    ar.*,
+                    CASE 
+                        WHEN ar.is_paid = 1 THEN 'Paid'
+                        ELSE 'Pending'
+                    END as status
+                FROM advance_repayments ar
+                WHERE ar.advance_id = ?
+                ORDER BY ar.due_date
+            ''', conn, params=(advance_id,))
+
+    def get_staff_outstanding(self, staff_id=None):
+        """Get outstanding amounts for staff (advances - repayments)"""
+        with self.get_connection() as conn:
+            query = '''
+                SELECT 
+                    s.id,
+                    s.name,
+                    COALESCE(SUM(a.amount), 0) as total_advance,
+                    COALESCE(SUM(CASE WHEN ar.is_paid = 1 THEN ar.amount ELSE 0 END), 0) as total_paid,
+                    COALESCE(SUM(a.amount), 0) - COALESCE(SUM(CASE WHEN ar.is_paid = 1 THEN ar.amount ELSE 0 END), 0) as outstanding
+                FROM staff s
+                LEFT JOIN advances a ON s.id = a.staff_id
+                LEFT JOIN advance_repayments ar ON a.id = ar.advance_id
+            '''
+            
+            params = []
+            if staff_id:
+                query += ' WHERE s.id = ?'
+                params.append(staff_id)
+            
+            query += ' GROUP BY s.id, s.name'
+            query += ' HAVING outstanding > 0'
+            
+            return pd.read_sql_query(query, conn, params=params) 

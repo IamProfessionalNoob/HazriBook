@@ -583,390 +583,193 @@ def main_app():
 def render_dashboard():
     st.title("Dashboard")
     
-    # Get current stats
-    stats = db.get_dashboard_stats()
+    # Get today's attendance summary
+    today_attendance = db.get_attendance(date.today())
+    present_count = len(today_attendance[today_attendance['is_present']]) if not today_attendance.empty else 0
+    total_count = len(today_attendance) if not today_attendance.empty else 1  # Prevent division by zero
     
-    # Metrics row
-    col1, col2, col3, col4 = st.columns(4)
+    attendance_percentage = (present_count/total_count)*100 if total_count > 0 else 0
+    
+    # Get staff outstanding amounts
+    outstanding_df = db.get_staff_outstanding()
+    total_outstanding = outstanding_df['outstanding'].sum() if not outstanding_df.empty else 0
+    
+    # Display metrics
+    col1, col2, col3 = st.columns(3)
     
     with col1:
         render_metric_card(
-            "Total Staff",
-            stats['total_staff'],
-            "group",
-            "#2e7d32"
+            "Today's Attendance",
+            f"{present_count}/{total_count} ({attendance_percentage:.1f}%)",
+            "👥",
+            color="#2e7d32"
         )
     
     with col2:
         render_metric_card(
-            "Today's Attendance",
-            f"{stats['avg_attendance']:.1f}%",
-            "how_to_reg",
-            "#1976d2"
+            "Total Staff",
+            str(total_count),
+            "👨‍💼",
+            color="#1976d2"
         )
     
     with col3:
         render_metric_card(
-            "Monthly Salary",
-            f"₹{stats['total_salary']:,.2f}",
-            "payments",
-            "#d32f2f"
+            "Total Outstanding",
+            f"₹{total_outstanding:,.2f}",
+            "💰",
+            color="#d32f2f"
         )
     
-    with col4:
-        render_metric_card(
-            "Pending Advances",
-            f"₹{stats['total_advance']:,.2f}",
-            "account_balance",
-            "#f57c00"
+    # Display staff with outstanding amounts
+    if not outstanding_df.empty:
+        st.subheader("Staff with Outstanding Amounts")
+        st.dataframe(
+            outstanding_df[['name', 'total_advance', 'total_paid', 'outstanding']],
+            hide_index=True,
+            column_config={
+                "name": "Staff Name",
+                "total_advance": st.column_config.NumberColumn(
+                    "Total Advance",
+                    format="₹%.2f"
+                ),
+                "total_paid": st.column_config.NumberColumn(
+                    "Total Paid",
+                    format="₹%.2f"
+                ),
+                "outstanding": st.column_config.NumberColumn(
+                    "Outstanding",
+                    format="₹%.2f"
+                )
+            }
         )
     
-    st.markdown("<br>", unsafe_allow_html=True)
-    
-    # Charts row
-    col1, col2 = st.columns(2)
-    
-    with col1:
-        st.markdown("""
-            <div class="dashboard-card">
-                <h3>Attendance Trend</h3>
-        """, unsafe_allow_html=True)
-        
-        # Get attendance data for the last 6 months
-        today = date.today()
-        months_data = []
-        
-        for i in range(6):
-            month = today.month - i
-            year = today.year
-            
-            if month <= 0:
-                month += 12
-                year -= 1
-            
-            month_stats = db.get_dashboard_stats(year, month)
-            months_data.append({
-                'Month': f"{calendar.month_abbr[month]} {year}",
-                'Attendance': month_stats['avg_attendance']
-            })
-        
-        months_data.reverse()
-        df = pd.DataFrame(months_data)
-        
-        fig = px.line(
-            df,
-            x='Month',
-            y='Attendance',
-            markers=True,
-            line_shape="spline"
-        )
-        fig.update_layout(
-            margin=dict(l=20, r=20, t=20, b=20),
-            yaxis_title="Attendance %",
-            xaxis_title=None,
-            plot_bgcolor='white',
-            paper_bgcolor='white'
-        )
-        fig.update_traces(
-            line_color="#2e7d32",
-            marker=dict(size=8)
-        )
-        st.plotly_chart(fig, use_container_width=True)
-        st.markdown("</div>", unsafe_allow_html=True)
-    
-    with col2:
-        st.markdown("""
-            <div class="dashboard-card">
-                <h3>Recent Activity</h3>
-        """, unsafe_allow_html=True)
-        
-        # Get today's attendance summary
-        today_attendance = db.get_attendance(date.today())
-        present_count = len(today_attendance[today_attendance['is_present']]) if not today_attendance.empty else 0
-        total_count = len(today_attendance) if not today_attendance.empty else 1  # Prevent division by zero
-        
-        attendance_percentage = (present_count/total_count)*100 if total_count > 0 else 0
-        
-        st.markdown(f"""
-            <div style="margin-bottom: 1rem;">
-                <p style="color: var(--text-light); margin-bottom: 0.5rem;">Today's Attendance</p>
-                <div style="display: flex; align-items: center;">
-                    <div style="flex-grow: 1; height: 8px; background-color: #e8f5e9; border-radius: 4px;">
-                        <div style="width: {attendance_percentage}%; height: 100%; background-color: #2e7d32; border-radius: 4px;"></div>
-                    </div>
-                    <span style="margin-left: 1rem; color: var(--text); font-weight: 500;">
-                        {present_count}/{total_count}
-                    </span>
-                </div>
-            </div>
-        """, unsafe_allow_html=True)
-        
-        # Recent advances
-        st.markdown("<h4>Recent Advances</h4>", unsafe_allow_html=True)
-        pending_advances = db.get_pending_advances()
-        
-        if not pending_advances.empty:
-            for _, row in pending_advances.head(5).iterrows():
-                st.markdown(f"""
-                    <div style="padding: 0.75rem; border-radius: 8px; background-color: #f8f9fa; margin-bottom: 0.5rem;">
-                        <div style="display: flex; justify-content: space-between; align-items: center;">
-                            <div>
-                                <p style="margin: 0; color: var(--text); font-weight: 500;">{row['staff_name']}</p>
-                                <small style="color: var(--text-light);">
-                                    {row['pending_installments']} installments remaining
-                                </small>
-                            </div>
-                            <div style="text-align: right;">
-                                <p style="margin: 0; color: #d32f2f; font-weight: 500;">
-                                    ₹{row['pending_amount']:,.2f}
-                                </p>
-                            </div>
-                        </div>
-                    </div>
-                """, unsafe_allow_html=True)
-        else:
-            st.info("No pending advances")
-        
-        st.markdown("</div>", unsafe_allow_html=True)
+    # Recent Activity section
+    st.markdown("""
+        <h3>Recent Activity</h3>
+    """, unsafe_allow_html=True)
 
 def render_attendance():
-    st.title("Daily Attendance")
+    st.title("Attendance Management")
     
-    # Date selection with calendar view
-    col1, col2 = st.columns([2, 3])
+    # Date selection with default to today
+    selected_date = st.date_input(
+        "Select Date",
+        value=date.today(),
+        max_value=date.today()  # Allow selecting up to today
+    )
     
-    with col1:
-        st.markdown("""
-            <div class="dashboard-card">
-                <h3>Select Date</h3>
-        """, unsafe_allow_html=True)
-        
-        # Calendar view
-        today = date.today()
-        selected_date = st.date_input(
-            "Date",
-            value=today,
-            max_value=today,
-            key="attendance_date"
-        )
-        
-        # Check if selected date is a holiday
-        is_holiday = db.is_holiday(selected_date)
-        if is_holiday:
-            holiday_info = db.get_holidays(selected_date.year, selected_date.month)
-            holiday_name = holiday_info[holiday_info['date'] == str(selected_date)]['name'].iloc[0]
-            st.markdown(f"""
-                <div style="background-color: #e8f5e9; color: #2e7d32; padding: 1rem; border-radius: 8px; margin: 1rem 0;">
-                    <i class="material-icons-round" style="vertical-align: middle; margin-right: 0.5rem;">event</i>
-                    Holiday: {holiday_name}
-                </div>
-            """, unsafe_allow_html=True)
-        
-        st.markdown("</div>", unsafe_allow_html=True)
+    # Get attendance data for selected date
+    attendance_df = db.get_attendance(selected_date)
     
-    with col2:
-        st.markdown("""
-            <div class="dashboard-card">
-                <h3>Mark Attendance</h3>
-        """, unsafe_allow_html=True)
+    # Create a form for marking attendance
+    with st.form("attendance_form"):
+        # Create columns for better layout
+        cols = st.columns([2, 1, 1])
         
-        # Get attendance data
-        attendance_df = db.get_attendance(selected_date)
+        # Headers
+        cols[0].markdown("**Staff Name**")
+        cols[1].markdown("**Present**")
+        cols[2].markdown("**Holiday**")
         
-        if not attendance_df.empty:
-            with st.form("attendance_form", clear_on_submit=False):
-                # Select all checkbox
-                select_all = st.checkbox(
-                    "Select All",
-                    value=False,
-                    key="select_all"
-                )
+        # Create a dictionary to store attendance status
+        attendance_status = {}
+        
+        # Display each staff member's attendance status
+        for _, row in attendance_df.iterrows():
+            cols = st.columns([2, 1, 1])
+            
+            # Staff name
+            cols[0].markdown(row['name'])
+            
+            # Present checkbox
+            attendance_status[f"present_{row['id']}"] = cols[1].checkbox(
+                "Present",
+                value=row['is_present'],
+                key=f"present_{row['id']}"
+            )
+            
+            # Holiday checkbox
+            attendance_status[f"holiday_{row['id']}"] = cols[2].checkbox(
+                "Holiday",
+                value=row['is_holiday'],
+                key=f"holiday_{row['id']}"
+            )
+        
+        # Submit button
+        submitted = st.form_submit_button("Save Attendance")
+        
+        if submitted:
+            # Update attendance for each staff member
+            for _, row in attendance_df.iterrows():
+                staff_id = row['id']
+                is_present = attendance_status.get(f"present_{staff_id}", False)
+                is_holiday = attendance_status.get(f"holiday_{staff_id}", False)
                 
-                st.markdown("<br>", unsafe_allow_html=True)
-                
-                # Create columns for better layout
-                cols = st.columns(3)
-                attendance_data = {}
-                
-                for idx, row in attendance_df.iterrows():
-                    col_idx = idx % 3
-                    with cols[col_idx]:
-                        default_value = True if select_all else bool(row['is_present'])
-                        attendance_data[row['id']] = st.checkbox(
-                            row['name'],
-                            value=default_value,
-                            key=f"att_{row['id']}"
-                        )
-                
-                st.markdown("<br>", unsafe_allow_html=True)
-                
-                if st.form_submit_button("Save Attendance", use_container_width=True):
-                    for staff_id, is_present in attendance_data.items():
-                        db.mark_attendance(staff_id, selected_date, is_present)
-                    st.success("Attendance saved successfully!")
-                    st.rerun()
-        else:
-            st.info("No staff members found. Please add staff first.")
-        
-        st.markdown("</div>", unsafe_allow_html=True)
-    
-    # Monthly overview
-    st.markdown("<br>", unsafe_allow_html=True)
-    st.markdown("""
-        <div class="dashboard-card">
-            <h3>Monthly Overview</h3>
-    """, unsafe_allow_html=True)
-    
-    # Month and year selection
-    col1, col2 = st.columns(2)
-    
-    with col1:
-        selected_year = st.selectbox(
-            "Year",
-            options=range(today.year-1, today.year+1),
-            index=1,
-            key="overview_year"
-        )
-    
-    with col2:
-        selected_month = st.selectbox(
-            "Month",
-            options=range(1, 13),
-            format_func=lambda x: calendar.month_name[x],
-            index=today.month-1,
-            key="overview_month"
-        )
-    
-    # Get monthly attendance data
-    monthly_df = db.get_monthly_attendance(selected_year, selected_month)
-    
-    if not monthly_df.empty:
-        # Create a styled table view
-        st.dataframe(
-            monthly_df,
-            hide_index=True,
-            use_container_width=True
-        )
-        
-        # Export options
-        col1, col2 = st.columns(2)
-        
-        with col1:
-            if st.button("Export to Excel", use_container_width=True):
-                # Add export functionality
-                pass
-        
-        with col2:
-            if st.button("Send Summary to Staff", use_container_width=True):
-                for _, row in monthly_df.iterrows():
-                    success, message = messaging.send_attendance_summary(
-                        row['id'],
-                        selected_year,
-                        selected_month
-                    )
-                    if success:
-                        st.success(f"Sent to {row['name']}")
-                    else:
-                        st.error(f"Failed to send to {row['name']}: {message}")
-    else:
-        st.info("No attendance data available for the selected month.")
-    
-    st.markdown("</div>", unsafe_allow_html=True)
+                # Mark attendance
+                db.mark_attendance(staff_id, selected_date, is_present, is_holiday)
+            
+            st.success("Attendance saved successfully!")
+            st.rerun()
 
 def render_staff_management():
     st.title("Staff Management")
     
-    # Add new staff form
-    st.markdown("""
-        <div class="dashboard-card">
-            <h3>Add New Staff</h3>
-    """, unsafe_allow_html=True)
-    
-    with st.form("add_staff_form", clear_on_submit=True):
-        col1, col2, col3 = st.columns(3)
-        
-        with col1:
+    # Add new staff
+    with st.expander("Add New Staff"):
+        with st.form("add_staff_form"):
             name = st.text_input("Name")
-        with col2:
             phone = st.text_input("Phone")
-        with col3:
-            monthly_salary = st.number_input("Monthly Salary", min_value=0.0, step=1000.0)
-        
-        if st.form_submit_button("Add Staff", use_container_width=True):
-            if name and monthly_salary > 0:
-                db.add_staff(name, phone, monthly_salary)
-                st.success(f"Added {name} to staff")
-                st.rerun()
-            else:
-                st.error("Please fill in all required fields")
+            salary = st.number_input("Monthly Salary", min_value=0.0)
+            col1, col2 = st.columns(2)
+            with col1:
+                cycle_start = st.number_input("Salary Cycle Start Day", min_value=1, max_value=31, value=1)
+            with col2:
+                cycle_end = st.number_input("Salary Cycle End Day", min_value=1, max_value=31, value=31)
+            if st.form_submit_button("Add Staff"):
+                db.add_staff(name, phone, salary, cycle_start, cycle_end)
+                st.success("Staff added successfully!")
     
-    st.markdown("</div>", unsafe_allow_html=True)
-    
-    # Staff list
-    st.markdown("<br>", unsafe_allow_html=True)
-    st.markdown("""
-        <div class="dashboard-card">
-            <h3>Staff List</h3>
-    """, unsafe_allow_html=True)
-    
+    # View and manage staff
+    st.subheader("Current Staff")
     staff_df = db.get_all_staff()
-    
     if not staff_df.empty:
-        # Display staff data in an editable format
-        edited_df = st.data_editor(
-            staff_df,
-            hide_index=True,
-            column_config={
-                "id": None,  # Hide ID column
-                "created_at": None,  # Hide timestamp
-                "name": "Name",
-                "phone": "Phone",
-                "monthly_salary": st.column_config.NumberColumn(
-                    "Monthly Salary",
-                    format="₹%.2f"
-                )
-            },
-            disabled=["id"],
-            key="staff_editor"
-        )
-        
-        # Check for changes and update
-        if not edited_df.equals(staff_df):
-            for idx, row in edited_df.iterrows():
-                original = staff_df.loc[idx]
-                if not row.equals(original):
-                    db.update_staff(
-                        row['id'],
-                        row['name'],
-                        row['phone'],
-                        row['monthly_salary']
-                    )
-            st.success("Staff information updated")
-            st.rerun()
-        
-        # Delete staff option
-        st.markdown("<br>", unsafe_allow_html=True)
-        col1, col2 = st.columns(2)
-        
-        with col1:
-            staff_to_delete = st.selectbox(
-                "Select staff to delete",
-                options=staff_df['id'].tolist(),
-                format_func=lambda x: staff_df[staff_df['id'] == x]['name'].iloc[0]
-            )
-        
-        with col2:
-            if st.button("Delete Selected Staff", type="primary", use_container_width=True):
-                if st.session_state.user_role == "admin":
-                    db.delete_staff(staff_to_delete)
-                    st.success("Staff deleted successfully")
-                    st.rerun()
-                else:
-                    st.error("Only admin can delete staff")
-    else:
-        st.info("No staff members found. Add staff using the form above.")
-    
-    st.markdown("</div>", unsafe_allow_html=True)
+        for _, staff in staff_df.iterrows():
+            with st.expander(f"{staff['name']} - ₹{staff['monthly_salary']}"):
+                col1, col2 = st.columns(2)
+                with col1:
+                    st.write(f"Phone: {staff['phone']}")
+                    # Salary History
+                    st.subheader("Salary History")
+                    salary_history = db.get_staff_salary_history(staff['id'])
+                    if not salary_history.empty:
+                        st.dataframe(salary_history[['effective_from', 'effective_to', 'salary']])
+                    else:
+                        st.info("No salary history available")
+                
+                with col2:
+                    # Update Salary
+                    with st.form(f"update_salary_{staff['id']}"):
+                        new_salary = st.number_input("New Salary", min_value=0.0, value=float(staff['monthly_salary']))
+                        effective_from = st.date_input("Effective From")
+                        if st.form_submit_button("Update Salary"):
+                            db.update_staff_salary(staff['id'], new_salary, effective_from)
+                            st.success("Salary updated successfully!")
+                            st.rerun()
+                    
+                    # Salary Cycle Settings
+                    st.subheader("Salary Cycle Settings")
+                    cycle = db.get_staff_salary_cycle(staff['id'])
+                    with st.form(f"update_cycle_{staff['id']}"):
+                        col1, col2 = st.columns(2)
+                        with col1:
+                            start_day = st.number_input("Start Day", min_value=1, max_value=31, value=cycle['start'])
+                        with col2:
+                            end_day = st.number_input("End Day", min_value=1, max_value=31, value=cycle['end'])
+                        if st.form_submit_button("Update Salary Cycle"):
+                            db.set_staff_salary_cycle(staff['id'], start_day, end_day)
+                            st.success("Salary cycle updated successfully!")
+                            st.rerun()
 
 def render_holidays():
     st.title("Holiday Management")
@@ -1064,81 +867,52 @@ def render_advance_payments():
     st.title("Advance Payments")
     
     # Add new advance
-    st.markdown("""
-        <div class="dashboard-card">
-            <h3>New Advance Payment</h3>
-    """, unsafe_allow_html=True)
+    with st.expander("Add New Advance"):
+        with st.form("add_advance_form"):
+            staff_df = db.get_all_staff()
+            staff_id = st.selectbox("Select Staff", staff_df['id'], format_func=lambda x: staff_df[staff_df['id'] == x]['name'].iloc[0])
+            amount = st.number_input("Amount", min_value=0.0)
+            date = st.date_input("Date")
+            
+            repayment_type = st.selectbox("Repayment Type", ['OneTime', 'Weekly', 'Monthly'])
+            
+            if repayment_type != 'OneTime':
+                col1, col2 = st.columns(2)
+                with col1:
+                    emi_amount = st.number_input("EMI Amount", min_value=0.0)
+                with col2:
+                    emi_count = st.number_input("Number of EMIs", min_value=1)
+            
+            if st.form_submit_button("Add Advance"):
+                if repayment_type == 'OneTime':
+                    db.add_advance_with_emi(staff_id, amount, date, repayment_type)
+                else:
+                    db.add_advance_with_emi(staff_id, amount, date, repayment_type, emi_amount, emi_count)
+                st.success("Advance added successfully!")
     
-    with st.form("add_advance_form", clear_on_submit=True):
-        col1, col2, col3 = st.columns(3)
-        
-        staff_df = db.get_all_staff()
-        
-        with col1:
-            staff_id = st.selectbox(
-                "Staff Member",
-                options=staff_df['id'].tolist(),
-                format_func=lambda x: staff_df[staff_df['id'] == x]['name'].iloc[0]
-            )
-        
-        with col2:
-            amount = st.number_input("Amount", min_value=0.0, step=1000.0)
-        
-        with col3:
-            repayment_months = st.number_input(
-                "Repayment Months",
-                min_value=1,
-                max_value=12,
-                value=1
-            )
-        
-        if st.form_submit_button("Add Advance", use_container_width=True):
-            if amount > 0:
-                db.add_advance(staff_id, amount, date.today(), repayment_months)
-                st.success("Advance payment added successfully")
+    # View and manage advances
+    st.subheader("Current Advances")
+    advances_df = db.get_all_advances()
+    if not advances_df.empty:
+        for _, advance in advances_df.iterrows():
+            staff_name = staff_df[staff_df['id'] == advance['staff_id']]['name'].iloc[0]
+            with st.expander(f"{staff_name} - ₹{advance['amount']} ({advance['repayment_type']})"):
+                st.write(f"Date: {advance['date']}")
+                st.write(f"Status: {advance['status']}")
+                st.write(f"Remaining Amount: ₹{advance['remaining_amount']}")
                 
-                # Send notification
-                messaging.send_advance_notification(staff_id, amount, date.today())
-                st.rerun()
-            else:
-                st.error("Please enter a valid amount")
-    
-    st.markdown("</div>", unsafe_allow_html=True)
-    
-    # Pending advances
-    st.markdown("<br>", unsafe_allow_html=True)
-    st.markdown("""
-        <div class="dashboard-card">
-            <h3>Pending Advances</h3>
-    """, unsafe_allow_html=True)
-    
-    pending_advances = db.get_pending_advances()
-    
-    if not pending_advances.empty:
-        st.dataframe(
-            pending_advances,
-            hide_index=True,
-            column_config={
-                "advance_id": None,
-                "staff_id": None,
-                "staff_name": "Staff Name",
-                "total_amount": st.column_config.NumberColumn(
-                    "Total Amount",
-                    format="₹%.2f"
-                ),
-                "advance_date": "Date",
-                "pending_amount": st.column_config.NumberColumn(
-                    "Pending Amount",
-                    format="₹%.2f"
-                ),
-                "pending_installments": "Remaining Installments"
-            },
-            use_container_width=True
-        )
-    else:
-        st.info("No pending advances")
-    
-    st.markdown("</div>", unsafe_allow_html=True)
+                if advance['repayment_type'] != 'OneTime':
+                    st.write(f"EMI Amount: ₹{advance['emi_amount']}")
+                    st.write(f"Total EMIs: {advance['total_emi_count']}")
+                
+                # Add repayment
+                if advance['status'] == 'Active':
+                    with st.form(f"add_repayment_{advance['id']}"):
+                        paid_amount = st.number_input("Payment Amount", min_value=0.0, max_value=float(advance['remaining_amount']))
+                        if st.form_submit_button("Add Payment"):
+                            db.update_advance_remaining(advance['id'], paid_amount)
+                            st.success("Payment added successfully!")
+                            st.rerun()
 
 def render_reports():
     st.title("Reports")
@@ -1334,33 +1108,26 @@ def render_user_management():
 def render_settings():
     st.title("Settings")
     
-    if st.session_state.user_role != "admin":
-        st.error("Only admin users can access this page")
-        return
+    # Salary Cycle Settings
+    st.subheader("Salary Cycle Settings")
+    cycle = db.get_salary_cycle()
+    col1, col2 = st.columns(2)
+    with col1:
+        start_day = st.number_input("Salary Cycle Start Day", min_value=1, max_value=31, value=cycle['start'])
+    with col2:
+        end_day = st.number_input("Salary Cycle End Day", min_value=1, max_value=31, value=cycle['end'])
     
-    # Working days settings
-    st.markdown("""
-        <div class="dashboard-card">
-            <h3>Working Days</h3>
-    """, unsafe_allow_html=True)
-    
-    working_days = db.get_working_days()
-    
-    new_working_days = st.number_input(
-        "Number of working days per month",
-        min_value=1,
-        max_value=31,
-        value=working_days
-    )
-    
-    if new_working_days != working_days:
-        if st.button("Save Working Days", use_container_width=True):
-            db.set_working_days(new_working_days)
-            st.success("Working days updated successfully")
-            st.rerun()
-    
-    st.markdown("</div>", unsafe_allow_html=True)
-    
+    if st.button("Update Salary Cycle"):
+        db.set_salary_cycle(start_day, end_day)
+        st.success("Salary cycle updated successfully!")
+
+    # Working Days Setting
+    st.subheader("Working Days Setting")
+    working_days = st.number_input("Default Working Days per Month", min_value=1, max_value=31, value=26)
+    if st.button("Update Working Days"):
+        db.update_setting('working_days', str(working_days))
+        st.success("Working days updated successfully!")
+
     # Theme settings
     st.markdown("<br>", unsafe_allow_html=True)
     st.markdown("""
