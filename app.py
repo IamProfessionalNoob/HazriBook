@@ -8,6 +8,7 @@ import plotly.express as px
 import plotly.graph_objects as go
 from streamlit_option_menu import option_menu
 import secrets
+import io
 
 # Initialize database and messaging service
 db = Database()
@@ -652,107 +653,400 @@ def render_dashboard():
 def render_attendance():
     st.title("Attendance Management")
     
-    # Date selection with default to today
-    selected_date = st.date_input(
-        "Select Date",
-        value=date.today(),
-        max_value=date.today()  # Allow selecting up to today
-    )
+    # Create tabs for different views
+    tab1, tab2 = st.tabs(["📝 Mark Attendance", "📊 Attendance Overview"])
     
-    # Get attendance data for selected date
-    attendance_df = db.get_attendance(selected_date)
-    
-    # Create a form for marking attendance
-    with st.form("attendance_form"):
-        # Create columns for better layout
-        cols = st.columns([2, 1, 1])
+    with tab1:
+        # Date selection with calendar widget
+        col1, col2 = st.columns([3, 1])
+        with col1:
+            selected_date = st.date_input(
+                "Select Date",
+                value=date.today(),
+                max_value=date.today()
+            )
+        with col2:
+            if st.button("Today", use_container_width=True):
+                selected_date = date.today()
+                st.rerun()
         
-        # Headers
-        cols[0].markdown("**Staff Name**")
-        cols[1].markdown("**Present**")
-        cols[2].markdown("**Holiday**")
+        # Get attendance data for selected date
+        attendance_df = db.get_attendance(selected_date)
         
-        # Create a dictionary to store attendance status
-        attendance_status = {}
+        # Show summary metrics
+        total_staff = len(attendance_df)
+        present_count = len(attendance_df[attendance_df['is_present']])
+        holiday_count = len(attendance_df[attendance_df['is_holiday']])
+        absent_count = total_staff - present_count - holiday_count
         
-        # Display each staff member's attendance status
-        for _, row in attendance_df.iterrows():
-            cols = st.columns([2, 1, 1])
-            
-            # Staff name
-            cols[0].markdown(row['name'])
-            
-            # Present checkbox
-            attendance_status[f"present_{row['id']}"] = cols[1].checkbox(
+        # Display metrics in cards
+        col1, col2, col3, col4 = st.columns(4)
+        with col1:
+            render_metric_card(
+                "Total Staff",
+                str(total_staff),
+                "group",
+                "#1976d2"
+            )
+        with col2:
+            render_metric_card(
                 "Present",
-                value=row['is_present'],
-                key=f"present_{row['id']}"
+                str(present_count),
+                "check_circle",
+                "#2e7d32"
             )
+        with col3:
+            render_metric_card(
+                "Absent",
+                str(absent_count),
+                "cancel",
+                "#d32f2f"
+            )
+        with col4:
+            render_metric_card(
+                "On Holiday",
+                str(holiday_count),
+                "beach_access",
+                "#ff9800"
+            )
+        
+        # Create a form for marking attendance
+        st.markdown("<br>", unsafe_allow_html=True)
+        with st.form("attendance_form"):
+            st.markdown("""
+                <div class="dashboard-card">
+                    <h3>Mark Attendance</h3>
+            """, unsafe_allow_html=True)
             
-            # Holiday checkbox
-            attendance_status[f"holiday_{row['id']}"] = cols[2].checkbox(
-                "Holiday",
-                value=row['is_holiday'],
-                key=f"holiday_{row['id']}"
-            )
-        
-        # Submit button
-        submitted = st.form_submit_button("Save Attendance")
-        
-        if submitted:
-            # Update attendance for each staff member
-            for _, row in attendance_df.iterrows():
-                staff_id = row['id']
-                is_present = attendance_status.get(f"present_{staff_id}", False)
-                is_holiday = attendance_status.get(f"holiday_{staff_id}", False)
+            # Create a table-like layout
+            for i in range(0, len(attendance_df), 2):
+                col1, col2 = st.columns(2)
                 
-                # Mark attendance
-                db.mark_attendance(staff_id, selected_date, is_present, is_holiday)
+                # First staff member
+                with col1:
+                    if i < len(attendance_df):
+                        staff = attendance_df.iloc[i]
+                        st.markdown(f"""
+                            <div style="padding: 1rem; background-color: #f8f9fa; border-radius: 8px; margin-bottom: 1rem;">
+                                <h4 style="margin-bottom: 0.5rem;">{staff['name']}</h4>
+                        """, unsafe_allow_html=True)
+                        
+                        status = st.radio(
+                            f"Status for {staff['name']}",
+                            ["Present", "Absent", "Holiday"],
+                            horizontal=True,
+                            key=f"status_{staff['id']}",
+                            index=0 if staff['is_present'] else (2 if staff['is_holiday'] else 1)
+                        )
+                        
+                        st.markdown("</div>", unsafe_allow_html=True)
+                
+                # Second staff member
+                with col2:
+                    if i + 1 < len(attendance_df):
+                        staff = attendance_df.iloc[i + 1]
+                        st.markdown(f"""
+                            <div style="padding: 1rem; background-color: #f8f9fa; border-radius: 8px; margin-bottom: 1rem;">
+                                <h4 style="margin-bottom: 0.5rem;">{staff['name']}</h4>
+                        """, unsafe_allow_html=True)
+                        
+                        status = st.radio(
+                            f"Status for {staff['name']}",
+                            ["Present", "Absent", "Holiday"],
+                            horizontal=True,
+                            key=f"status_{staff['id']}",
+                            index=0 if staff['is_present'] else (2 if staff['is_holiday'] else 1)
+                        )
+                        
+                        st.markdown("</div>", unsafe_allow_html=True)
             
-            st.success("Attendance saved successfully!")
-            st.rerun()
+            submitted = st.form_submit_button("Save Attendance", use_container_width=True)
+            
+            if submitted:
+                for _, staff in attendance_df.iterrows():
+                    status = st.session_state[f"status_{staff['id']}"]
+                    is_present = status == "Present"
+                    is_holiday = status == "Holiday"
+                    db.mark_attendance(staff['id'], selected_date, is_present, is_holiday)
+                
+                st.success("Attendance saved successfully!")
+                st.rerun()
+            
+            st.markdown("</div>", unsafe_allow_html=True)
+    
+    with tab2:
+        # Attendance Overview
+        st.markdown("""
+            <div class="dashboard-card">
+                <h3>Monthly Attendance Overview</h3>
+        """, unsafe_allow_html=True)
+        
+        # Month selection
+        col1, col2 = st.columns(2)
+        with col1:
+            selected_year = st.selectbox(
+                "Year",
+                options=range(date.today().year-1, date.today().year+2),
+                index=1,
+                key="overview_year"
+            )
+        with col2:
+            selected_month = st.selectbox(
+                "Month",
+                options=range(1, 13),
+                format_func=lambda x: calendar.month_name[x],
+                index=date.today().month-1,
+                key="overview_month"
+            )
+        
+        # Get monthly attendance data
+        start_date = date(selected_year, selected_month, 1)
+        end_date = date(selected_year, selected_month, calendar.monthrange(selected_year, selected_month)[1])
+        monthly_attendance = db.get_attendance_range(start_date, end_date)
+        
+        if not monthly_attendance.empty:
+            # Prepare data for charts
+            daily_stats = monthly_attendance.groupby('date').agg({
+                'is_present': 'sum',
+                'is_holiday': 'sum',
+                'id': 'count'
+            }).reset_index()
+            daily_stats['absent'] = daily_stats['id'] - daily_stats['is_present'] - daily_stats['is_holiday']
+            
+            # Create attendance trend chart
+            fig = go.Figure()
+            
+            fig.add_trace(go.Scatter(
+                x=daily_stats['date'],
+                y=daily_stats['is_present'],
+                name='Present',
+                line=dict(color='#2e7d32', width=2),
+                fill='tonexty'
+            ))
+            
+            fig.add_trace(go.Scatter(
+                x=daily_stats['date'],
+                y=daily_stats['absent'],
+                name='Absent',
+                line=dict(color='#d32f2f', width=2),
+                fill='tonexty'
+            ))
+            
+            fig.add_trace(go.Scatter(
+                x=daily_stats['date'],
+                y=daily_stats['is_holiday'],
+                name='Holiday',
+                line=dict(color='#ff9800', width=2),
+                fill='tonexty'
+            ))
+            
+            fig.update_layout(
+                title='Daily Attendance Trend',
+                xaxis_title='Date',
+                yaxis_title='Number of Staff',
+                hovermode='x unified',
+                showlegend=True,
+                template='plotly_white',
+                height=400
+            )
+            
+            st.plotly_chart(fig, use_container_width=True)
+            
+            # Staff-wise attendance summary
+            staff_summary = monthly_attendance.groupby('name').agg({
+                'is_present': 'sum',
+                'is_holiday': 'sum',
+                'date': 'count'
+            }).reset_index()
+            
+            staff_summary['absent'] = staff_summary['date'] - staff_summary['is_present'] - staff_summary['is_holiday']
+            staff_summary['attendance_rate'] = (staff_summary['is_present'] / (staff_summary['date'] - staff_summary['is_holiday'])) * 100
+            
+            # Display staff summary
+            st.markdown("<br><h4>Staff-wise Attendance Summary</h4>", unsafe_allow_html=True)
+            st.dataframe(
+                staff_summary,
+                hide_index=True,
+                column_config={
+                    'name': 'Staff Name',
+                    'is_present': 'Days Present',
+                    'is_holiday': 'Holidays',
+                    'absent': 'Days Absent',
+                    'attendance_rate': st.column_config.NumberColumn(
+                        'Attendance Rate',
+                        format="%.1f%%"
+                    )
+                }
+            )
+            
+            # Export and Share options
+            st.markdown("<br>", unsafe_allow_html=True)
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                # Prepare Excel data
+                def create_excel_report():
+                    # Create a more detailed report
+                    report_data = {
+                        'Staff Name': staff_summary['name'],
+                        'Days Present': staff_summary['is_present'],
+                        'Days Absent': staff_summary['absent'],
+                        'Holidays': staff_summary['is_holiday'],
+                        'Attendance Rate (%)': staff_summary['attendance_rate'].round(2),
+                        'Month': calendar.month_name[selected_month],
+                        'Year': selected_year
+                    }
+                    df = pd.DataFrame(report_data)
+                    
+                    # Create Excel file in memory
+                    output = io.BytesIO()
+                    with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
+                        df.to_excel(writer, sheet_name='Attendance Summary', index=False)
+                        workbook = writer.book
+                        worksheet = writer.sheets['Attendance Summary']
+                        
+                        # Add formatting
+                        header_format = workbook.add_format({
+                            'bold': True,
+                            'bg_color': '#2e7d32',
+                            'font_color': 'white',
+                            'border': 1
+                        })
+                        
+                        # Format headers
+                        for col_num, value in enumerate(df.columns.values):
+                            worksheet.write(0, col_num, value, header_format)
+                            worksheet.set_column(col_num, col_num, 15)
+                        
+                        # Add percentage format for attendance rate
+                        percent_format = workbook.add_format({'num_format': '0.00%'})
+                        worksheet.set_column('E:E', 15, percent_format)
+                    
+                    return output.getvalue()
+                
+                excel_data = create_excel_report()
+                st.download_button(
+                    label="📥 Download Excel Report",
+                    data=excel_data,
+                    file_name=f"attendance_report_{selected_year}_{calendar.month_name[selected_month]}.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    use_container_width=True
+                )
+            
+            with col2:
+                if st.button("Send WhatsApp Summary", use_container_width=True):
+                    with st.spinner("Sending summaries..."):
+                        success_count = 0
+                        for _, row in staff_summary.iterrows():
+                            success, _ = messaging.send_attendance_summary(
+                                row['name'],
+                                selected_year,
+                                selected_month,
+                                {
+                                    'present': int(row['is_present']),
+                                    'absent': int(row['absent']),
+                                    'holidays': int(row['is_holiday']),
+                                    'rate': float(row['attendance_rate'])
+                                }
+                            )
+                            if success:
+                                success_count += 1
+                        
+                        st.success(f"Successfully sent {success_count} out of {len(staff_summary)} summaries")
+        else:
+            st.info("No attendance data available for the selected month")
+        
+        st.markdown("</div>", unsafe_allow_html=True)
 
 def render_staff_management():
     st.title("Staff Management")
     
     # Add new staff
-    with st.expander("Add New Staff"):
+    with st.expander("➕ Add New Staff", expanded=True):
+        st.markdown("""
+            <div class="dashboard-card">
+                <h3>New Staff Details</h3>
+        """, unsafe_allow_html=True)
+        
         with st.form("add_staff_form"):
-            name = st.text_input("Name")
-            phone = st.text_input("Phone")
-            salary = st.number_input("Monthly Salary", min_value=0.0)
             col1, col2 = st.columns(2)
+            
             with col1:
-                cycle_start = st.number_input("Salary Cycle Start Day", min_value=1, max_value=31, value=1)
+                name = st.text_input("Full Name", placeholder="Enter staff name")
+                phone = st.text_input("Phone Number", placeholder="Enter phone number")
+            
             with col2:
-                cycle_end = st.number_input("Salary Cycle End Day", min_value=1, max_value=31, value=31)
-            if st.form_submit_button("Add Staff"):
-                db.add_staff(name, phone, salary, cycle_start, cycle_end)
-                st.success("Staff added successfully!")
+                salary = st.number_input("Monthly Salary (₹)", min_value=0.0, step=1000.0)
+                st.markdown("<br>", unsafe_allow_html=True)
+                st.markdown("**Salary Cycle**")
+                cycle_col1, cycle_col2 = st.columns(2)
+                with cycle_col1:
+                    cycle_start = st.number_input("Start Day", min_value=1, max_value=31, value=1)
+                with cycle_col2:
+                    cycle_end = st.number_input("End Day", min_value=1, max_value=31, value=31)
+            
+            if st.form_submit_button("Add Staff", use_container_width=True):
+                if name and phone and salary:
+                    db.add_staff(name, phone, salary, cycle_start, cycle_end)
+                    st.success("Staff added successfully!")
+                    st.rerun()
+                else:
+                    st.error("Please fill in all required fields")
+        
+        st.markdown("</div>", unsafe_allow_html=True)
     
     # View and manage staff
-    st.subheader("Current Staff")
+    st.markdown("<br>", unsafe_allow_html=True)
+    st.markdown("""
+        <div class="dashboard-card">
+            <h3>Current Staff</h3>
+    """, unsafe_allow_html=True)
+    
     staff_df = db.get_all_staff()
     if not staff_df.empty:
         for _, staff in staff_df.iterrows():
-            with st.expander(f"{staff['name']} - ₹{staff['monthly_salary']}"):
+            with st.expander(f"👤 {staff['name']} - ₹{staff['monthly_salary']:,.2f}", expanded=False):
                 col1, col2 = st.columns(2)
+                
                 with col1:
-                    st.write(f"Phone: {staff['phone']}")
+                    st.markdown(f"""
+                        <div style="padding: 1rem; background-color: #f8f9fa; border-radius: 8px;">
+                            <p><strong>Phone:</strong> {staff['phone']}</p>
+                            <p><strong>Salary Cycle:</strong> {staff['salary_cycle_start']} to {staff['salary_cycle_end']}</p>
+                        </div>
+                    """, unsafe_allow_html=True)
+                    
                     # Salary History
                     st.subheader("Salary History")
                     salary_history = db.get_staff_salary_history(staff['id'])
                     if not salary_history.empty:
-                        st.dataframe(salary_history[['effective_from', 'effective_to', 'salary']])
+                        st.dataframe(
+                            salary_history[['effective_from', 'effective_to', 'salary']],
+                            hide_index=True,
+                            column_config={
+                                "effective_from": "From",
+                                "effective_to": "To",
+                                "salary": st.column_config.NumberColumn(
+                                    "Salary",
+                                    format="₹%.2f"
+                                )
+                            }
+                        )
                     else:
                         st.info("No salary history available")
                 
                 with col2:
                     # Update Salary
                     with st.form(f"update_salary_{staff['id']}"):
-                        new_salary = st.number_input("New Salary", min_value=0.0, value=float(staff['monthly_salary']))
+                        st.subheader("Update Salary")
+                        new_salary = st.number_input(
+                            "New Salary (₹)",
+                            min_value=0.0,
+                            value=float(staff['monthly_salary']),
+                            step=1000.0
+                        )
                         effective_from = st.date_input("Effective From")
-                        if st.form_submit_button("Update Salary"):
+                        if st.form_submit_button("Update Salary", use_container_width=True):
                             db.update_staff_salary(staff['id'], new_salary, effective_from)
                             st.success("Salary updated successfully!")
                             st.rerun()
@@ -761,15 +1055,19 @@ def render_staff_management():
                     st.subheader("Salary Cycle Settings")
                     cycle = db.get_staff_salary_cycle(staff['id'])
                     with st.form(f"update_cycle_{staff['id']}"):
-                        col1, col2 = st.columns(2)
-                        with col1:
+                        cycle_col1, cycle_col2 = st.columns(2)
+                        with cycle_col1:
                             start_day = st.number_input("Start Day", min_value=1, max_value=31, value=cycle['start'])
-                        with col2:
+                        with cycle_col2:
                             end_day = st.number_input("End Day", min_value=1, max_value=31, value=cycle['end'])
-                        if st.form_submit_button("Update Salary Cycle"):
+                        if st.form_submit_button("Update Salary Cycle", use_container_width=True):
                             db.set_staff_salary_cycle(staff['id'], start_day, end_day)
                             st.success("Salary cycle updated successfully!")
                             st.rerun()
+    else:
+        st.info("No staff members found. Add your first staff member above.")
+    
+    st.markdown("</div>", unsafe_allow_html=True)
 
 def render_holidays():
     st.title("Holiday Management")
@@ -867,52 +1165,107 @@ def render_advance_payments():
     st.title("Advance Payments")
     
     # Add new advance
-    with st.expander("Add New Advance"):
+    with st.expander("💰 Add New Advance", expanded=True):
+        st.markdown("""
+            <div class="dashboard-card">
+                <h3>New Advance Details</h3>
+        """, unsafe_allow_html=True)
+        
         with st.form("add_advance_form"):
             staff_df = db.get_all_staff()
-            staff_id = st.selectbox("Select Staff", staff_df['id'], format_func=lambda x: staff_df[staff_df['id'] == x]['name'].iloc[0])
-            amount = st.number_input("Amount", min_value=0.0)
-            date = st.date_input("Date")
+            col1, col2 = st.columns(2)
             
-            repayment_type = st.selectbox("Repayment Type", ['OneTime', 'Weekly', 'Monthly'])
+            with col1:
+                staff_id = st.selectbox(
+                    "Select Staff",
+                    staff_df['id'],
+                    format_func=lambda x: staff_df[staff_df['id'] == x]['name'].iloc[0]
+                )
+                amount = st.number_input("Amount (₹)", min_value=0.0, step=1000.0)
+            
+            with col2:
+                advance_date = st.date_input("Date")
+                repayment_type = st.selectbox(
+                    "Repayment Type",
+                    ['OneTime', 'Weekly', 'Monthly'],
+                    format_func=lambda x: {
+                        'OneTime': 'One Time Payment',
+                        'Weekly': 'Weekly Installments',
+                        'Monthly': 'Monthly Installments'
+                    }[x]
+                )
             
             if repayment_type != 'OneTime':
+                st.markdown("**Installment Details**")
                 col1, col2 = st.columns(2)
                 with col1:
-                    emi_amount = st.number_input("EMI Amount", min_value=0.0)
+                    emi_amount = st.number_input("EMI Amount (₹)", min_value=0.0, step=1000.0)
                 with col2:
                     emi_count = st.number_input("Number of EMIs", min_value=1)
             
-            if st.form_submit_button("Add Advance"):
+            if st.form_submit_button("Add Advance", use_container_width=True):
                 if repayment_type == 'OneTime':
-                    db.add_advance_with_emi(staff_id, amount, date, repayment_type)
+                    db.add_advance_with_emi(staff_id, amount, advance_date, repayment_type)
                 else:
-                    db.add_advance_with_emi(staff_id, amount, date, repayment_type, emi_amount, emi_count)
+                    db.add_advance_with_emi(staff_id, amount, advance_date, repayment_type, emi_amount, emi_count)
                 st.success("Advance added successfully!")
+                st.rerun()
+        
+        st.markdown("</div>", unsafe_allow_html=True)
     
     # View and manage advances
-    st.subheader("Current Advances")
+    st.markdown("<br>", unsafe_allow_html=True)
+    st.markdown("""
+        <div class="dashboard-card">
+            <h3>Current Advances</h3>
+    """, unsafe_allow_html=True)
+    
     advances_df = db.get_all_advances()
     if not advances_df.empty:
         for _, advance in advances_df.iterrows():
             staff_name = staff_df[staff_df['id'] == advance['staff_id']]['name'].iloc[0]
-            with st.expander(f"{staff_name} - ₹{advance['amount']} ({advance['repayment_type']})"):
-                st.write(f"Date: {advance['date']}")
-                st.write(f"Status: {advance['status']}")
-                st.write(f"Remaining Amount: ₹{advance['remaining_amount']}")
+            with st.expander(
+                f"💵 {staff_name} - ₹{advance['amount']:,.2f} ({advance['repayment_type']})",
+                expanded=False
+            ):
+                col1, col2 = st.columns(2)
                 
-                if advance['repayment_type'] != 'OneTime':
-                    st.write(f"EMI Amount: ₹{advance['emi_amount']}")
-                    st.write(f"Total EMIs: {advance['total_emi_count']}")
+                with col1:
+                    st.markdown(f"""
+                        <div style="padding: 1rem; background-color: #f8f9fa; border-radius: 8px;">
+                            <p><strong>Date:</strong> {advance['date']}</p>
+                            <p><strong>Status:</strong> {advance['status']}</p>
+                            <p><strong>Remaining Amount:</strong> ₹{advance['remaining_amount']:,.2f}</p>
+                        </div>
+                    """, unsafe_allow_html=True)
+                    
+                    if advance['repayment_type'] != 'OneTime':
+                        st.markdown(f"""
+                            <div style="padding: 1rem; background-color: #f8f9fa; border-radius: 8px; margin-top: 1rem;">
+                                <p><strong>EMI Amount:</strong> ₹{advance['emi_amount']:,.2f}</p>
+                                <p><strong>Total EMIs:</strong> {advance['total_emi_count']}</p>
+                            </div>
+                        """, unsafe_allow_html=True)
                 
-                # Add repayment
-                if advance['status'] == 'Active':
-                    with st.form(f"add_repayment_{advance['id']}"):
-                        paid_amount = st.number_input("Payment Amount", min_value=0.0, max_value=float(advance['remaining_amount']))
-                        if st.form_submit_button("Add Payment"):
-                            db.update_advance_remaining(advance['id'], paid_amount)
-                            st.success("Payment added successfully!")
-                            st.rerun()
+                with col2:
+                    # Add repayment
+                    if advance['status'] == 'Active':
+                        with st.form(f"add_repayment_{advance['id']}"):
+                            st.subheader("Add Payment")
+                            paid_amount = st.number_input(
+                                "Payment Amount (₹)",
+                                min_value=0.0,
+                                max_value=float(advance['remaining_amount']),
+                                step=1000.0
+                            )
+                            if st.form_submit_button("Add Payment", use_container_width=True):
+                                db.update_advance_remaining(advance['id'], paid_amount)
+                                st.success("Payment added successfully!")
+                                st.rerun()
+    else:
+        st.info("No advances found. Add a new advance above.")
+    
+    st.markdown("</div>", unsafe_allow_html=True)
 
 def render_reports():
     st.title("Reports")
@@ -1211,4 +1564,9 @@ def logout():
 if not st.session_state.authenticated:
     login_page()
 else:
+    # Auto-mark attendance for today if not already marked
+    today = date.today()
+    today_attendance = db.get_attendance(today)
+    if today_attendance.empty:
+        db.auto_mark_attendance(today)
     main_app() 

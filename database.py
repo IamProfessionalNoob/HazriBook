@@ -1002,4 +1002,25 @@ class Database:
             query += ' GROUP BY s.id, s.name'
             query += ' HAVING outstanding > 0'
             
-            return pd.read_sql_query(query, conn, params=params) 
+            return pd.read_sql_query(query, conn, params=params)
+
+    def get_attendance_range(self, start_date, end_date):
+        """Get attendance data for a date range."""
+        try:
+            query = """
+                SELECT a.id, a.staff_id, a.date, a.is_present, a.is_holiday, s.name
+                FROM attendance a
+                JOIN staff s ON a.staff_id = s.id
+                WHERE a.date BETWEEN ? AND ?
+                ORDER BY a.date, s.name
+            """
+            self.cursor.execute(query, (start_date, end_date))
+            rows = self.cursor.fetchall()
+            
+            if not rows:
+                return pd.DataFrame(columns=['id', 'staff_id', 'date', 'is_present', 'is_holiday', 'name'])
+            
+            return pd.DataFrame(rows, columns=['id', 'staff_id', 'date', 'is_present', 'is_holiday', 'name'])
+        except Exception as e:
+            print(f"Error getting attendance range: {e}")
+            return pd.DataFrame(columns=['id', 'staff_id', 'date', 'is_present', 'is_holiday', 'name']) 
