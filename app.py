@@ -1059,6 +1059,8 @@ def render_advance_payments():
     
     advances_df = db.get_all_advances()
     staff_df = db.get_all_staff()  # Only non-hidden staff
+    # Only show advances for non-hidden staff
+    advances_df = advances_df[advances_df['staff_id'].isin(staff_df['id'])]
     if not advances_df.empty:
         for _, advance in advances_df.iterrows():
             staff_row = staff_df[staff_df['id'] == advance['staff_id']]

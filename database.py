@@ -128,11 +128,11 @@ class Database:
                     ('salary_cycle_end', '31')
             ''')
             
-            # Insert default admin user if not exists
+            # Insert default admin user 'Krish' if not exists
             cursor.execute('''
                 INSERT OR IGNORE INTO users (username, password, role)
-                VALUES ('admin', ?, 'admin')
-            ''', (self._hash_password('admin'),))
+                VALUES ('Krish', ?, 'admin')
+            ''', (self._hash_password('Krish@9777'),))
             
             # Add hidden column to staff table if it doesn't exist
             try:
