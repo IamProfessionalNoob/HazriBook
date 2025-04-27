@@ -201,18 +201,17 @@ class Database:
     # Staff Management
     def add_staff(self, name, phone, monthly_salary, salary_cycle_start, salary_cycle_end):
         try:
-            with self.get_connection() as conn:
-                cursor = conn.cursor()
-                # Check for duplicate phone number
-                cursor.execute("SELECT id FROM staff WHERE phone = ?", (phone,))
-                if cursor.fetchone():
-                    return False, "A staff member with this phone number already exists"
-                
-                cursor.execute("""
-                    INSERT INTO staff (name, phone, monthly_salary, salary_cycle_start, salary_cycle_end)
-                    VALUES (?, ?, ?, ?, ?)
-                """, (name, phone, monthly_salary, salary_cycle_start, salary_cycle_end))
-                conn.commit()
+            # Check for duplicate phone number
+            cursor = self.get_connection().cursor()
+            cursor.execute("SELECT id FROM staff WHERE phone = ?", (phone,))
+            if cursor.fetchone():
+                return False, "A staff member with this phone number already exists"
+            
+            cursor.execute("""
+                INSERT INTO staff (name, phone, monthly_salary, salary_cycle_start, salary_cycle_end)
+                VALUES (?, ?, ?, ?, ?)
+            """, (name, phone, monthly_salary, salary_cycle_start, salary_cycle_end))
+            self.get_connection().commit()
             return True, "Staff added successfully"
         except Exception as e:
             return False, f"Error adding staff: {str(e)}"
