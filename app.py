@@ -1368,7 +1368,7 @@ def render_settings():
     st.subheader("Working Days Setting")
     working_days = st.number_input("Default Working Days per Month", min_value=1, max_value=31, value=26)
     if st.button("Update Working Days"):
-        db.update_setting('working_days', str(working_days))
+        db.set_setting('working_days', str(working_days))
         st.success("Working days updated successfully!")
 
     # Theme settings
