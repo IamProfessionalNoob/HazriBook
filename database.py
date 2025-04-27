@@ -7,6 +7,7 @@ import calendar
 
 class Database:
     def __init__(self, db_name="staff.db"):
+        print(f"Using database file: {db_name}")
         self.db_name = db_name
         self.init_db()
 
@@ -133,6 +134,12 @@ class Database:
                 VALUES ('admin', ?, 'admin')
             ''', (self._hash_password('admin'),))
             
+            # Add hidden column to staff table if it doesn't exist
+            try:
+                cursor.execute("ALTER TABLE staff ADD COLUMN hidden INTEGER DEFAULT 0")
+            except Exception as e:
+                pass  # Ignore if column already exists
+            
             conn.commit()
 
     def _hash_password(self, password):
@@ -172,20 +179,46 @@ class Database:
             cursor.execute('DELETE FROM users WHERE id = ?', (user_id,))
             conn.commit()
 
-    # Staff Management
-    def add_staff(self, name, phone, monthly_salary, salary_cycle_start=1, salary_cycle_end=31):
+    def update_user(self, user_id, new_username=None, new_password=None):
         with self.get_connection() as conn:
             cursor = conn.cursor()
-            cursor.execute('''
+            if new_username and new_password:
+                hashed_password = self._hash_password(new_password)
+                cursor.execute('''
+                    UPDATE users SET username = ?, password = ? WHERE id = ?
+                ''', (new_username, hashed_password, user_id))
+            elif new_username:
+                cursor.execute('''
+                    UPDATE users SET username = ? WHERE id = ?
+                ''', (new_username, user_id))
+            elif new_password:
+                hashed_password = self._hash_password(new_password)
+                cursor.execute('''
+                    UPDATE users SET password = ? WHERE id = ?
+                ''', (hashed_password, user_id))
+            conn.commit()
+
+    # Staff Management
+    def add_staff(self, name, phone, monthly_salary, salary_cycle_start, salary_cycle_end):
+        try:
+            # Check for duplicate phone number
+            cursor = self.get_connection().cursor()
+            cursor.execute("SELECT id FROM staff WHERE phone = ?", (phone,))
+            if cursor.fetchone():
+                return False, "A staff member with this phone number already exists"
+            
+            cursor.execute("""
                 INSERT INTO staff (name, phone, monthly_salary, salary_cycle_start, salary_cycle_end)
                 VALUES (?, ?, ?, ?, ?)
-            ''', (name, phone, monthly_salary, salary_cycle_start, salary_cycle_end))
-            conn.commit()
-            return cursor.lastrowid
+            """, (name, phone, monthly_salary, salary_cycle_start, salary_cycle_end))
+            self.get_connection().commit()
+            return True, "Staff added successfully"
+        except Exception as e:
+            return False, f"Error adding staff: {str(e)}"
 
     def get_all_staff(self):
         with self.get_connection() as conn:
-            return pd.read_sql_query("SELECT * FROM staff ORDER BY name", conn)
+            return pd.read_sql_query("SELECT * FROM staff WHERE hidden IS NULL OR hidden = 0 ORDER BY name", conn)
 
     def update_staff(self, staff_id, name, phone, monthly_salary):
         with self.get_connection() as conn:
@@ -198,10 +231,14 @@ class Database:
             conn.commit()
 
     def delete_staff(self, staff_id):
-        with self.get_connection() as conn:
-            cursor = conn.cursor()
-            cursor.execute('DELETE FROM staff WHERE id = ?', (staff_id,))
-            conn.commit()
+        try:
+            with self.get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute("UPDATE staff SET hidden = 1 WHERE id = ?", (staff_id,))
+                conn.commit()
+            return True, "Staff member hidden successfully"
+        except Exception as e:
+            return False, f"Error hiding staff: {str(e)}"
 
     # Holiday Management
     def add_holiday(self, date, name):
@@ -1014,12 +1051,12 @@ class Database:
                 WHERE a.date BETWEEN ? AND ?
                 ORDER BY a.date, s.name
             """
-            self.cursor.execute(query, (start_date, end_date))
-            rows = self.cursor.fetchall()
-            
+            with self.get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute(query, (start_date, end_date))
+                rows = cursor.fetchall()
             if not rows:
                 return pd.DataFrame(columns=['id', 'staff_id', 'date', 'is_present', 'is_holiday', 'name'])
-            
             return pd.DataFrame(rows, columns=['id', 'staff_id', 'date', 'is_present', 'is_holiday', 'name'])
         except Exception as e:
             print(f"Error getting attendance range: {e}")
