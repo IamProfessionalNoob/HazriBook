@@ -1325,7 +1325,12 @@ def render_user_management():
             if st.button("Delete Selected User", use_container_width=True):
                 username = users_df[users_df['id'] == user_to_delete]['username'].iloc[0]
                 role = users_df[users_df['id'] == user_to_delete]['role'].iloc[0]
-                if username == 'admin' and not can_delete_admin:
+                # Only count non-hidden admins
+                if 'hidden' in users_df.columns:
+                    admin_users = users_df[(users_df['role'] == 'admin') & ((users_df['hidden'].isnull()) | (users_df['hidden'] == 0))]
+                else:
+                    admin_users = users_df[users_df['role'] == 'admin']
+                if username == 'admin' and len(admin_users) <= 1:
                     st.error("Cannot delete the only admin user. Add another admin first.")
                 else:
                     st.session_state.confirm_delete_user = user_to_delete
